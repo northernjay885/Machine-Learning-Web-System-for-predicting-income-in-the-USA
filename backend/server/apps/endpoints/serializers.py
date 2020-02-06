@@ -1,6 +1,6 @@
 # backend/server/apps/endpoints/serializers.py file
 from rest_framework import serializers
-from apps.endpoints.models import Endpoint, MLAlgorithm, MLRequest, MLAlgorithmStatus
+from apps.endpoints.models import Endpoint, MLAlgorithm, MLRequest, MLAlgorithmStatus, ABTest
 
 class EndpointSerializer(serializers.ModelSerializer):
     class Meta:
@@ -35,7 +35,7 @@ class MLRequestSerializer(serializers.ModelSerializer):
             "full_response",
             "response",
             "created_at",
-            "parent_mlalgorithm",
+            "parent_algorithm",
             )
         fields = (
             "id",
@@ -44,6 +44,25 @@ class MLRequestSerializer(serializers.ModelSerializer):
             "response",
             "feedback",
             "created_at",
-            "parent_mlalgorithm",
+            "parent_algorithm",
         )
-        
+
+class ABTestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ABTest
+        read_only_fields = (
+            "id",
+            "ended_at",
+            "created_at",
+            "summary",
+        )  
+        fields = (
+            "id",
+            "title",
+            "created_by",
+            "created_at",
+            "ended_at",
+            "summary",
+            "parent_algorithm_1",
+            "parent_algorithm_2",
+        )      

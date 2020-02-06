@@ -1,14 +1,19 @@
 import json
+import datetime
 from numpy.random import rand
 from django.shortcuts import render
+from django.db import transaction
+from django.db.models import F
 from rest_framework import viewsets, mixins, views, status
 from rest_framework.response import Response
+from rest_framework.exceptions import APIException
 from apps.ml.registry import MLRegistry
 from server.wsgi import registry
+
 # Create your views here.
 
-from apps.endpoints.models import Endpoint, MLAlgorithm, MLRequest, MLAlgorithmStatus
-from apps.endpoints.serializers import EndpointSerializer, MLAlgorithmSerializer, MLAlgorithmStatusSerializer, MLRequestSerializer
+from apps.endpoints.models import Endpoint, MLAlgorithm, MLRequest, MLAlgorithmStatus, ABTest
+from apps.endpoints.serializers import EndpointSerializer, MLAlgorithmSerializer, MLAlgorithmStatusSerializer, MLRequestSerializer, ABTestSerializer
 
 class EndpointViewSet(
     mixins.RetrieveModelMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
@@ -22,9 +27,9 @@ class MLAlgorithmViewSet(
 
 def deactivate_other_statuses(instance):
     old_statuses = MLAlgorithmStatus.objects.filter(parent_mlalgorithm = instance.parent_mlalgorithm,
-    create_at__lt=instance.created_at, active=True)
+    created_at__lt=instance.created_at, active=True)
 
-    for i in range(len(old_status)):
+    for i in range(len(old_statuses)):
         old_statuses[i].active = False
     MLAlgorithmStatus.objects.bulk_update(old_statuses, ["active"])
 
@@ -91,3 +96,106 @@ class PredictView(views.APIView):
         prediction["request_id"] = ml_request.id
 
         return Response(prediction)
+    
+class ABTestViewSet(
+    mixins.RetrieveModelMixin, mixins.ListModelMixin, viewsets.GenericViewSet,
+    mixins.CreateModelMixin, mixins.UpdateModelMixin
+):
+    serializer_class = ABTestSerializer
+    queryset = ABTest.objects.all()
+
+    def perform_create(self, serializer):
+        try:
+            with transaction.atomic():
+                instance = serializer.save()
+                #update status for first algorithm
+
+                status_1 = MLAlgorithmStatus(status="ab_testing",
+                created_by=instance.created_by,
+                parent_mlalgorithm = instance.parent_algorithm_1,
+                active=True)
+                status_1.save()
+                deactivate_other_statuses(status_1)
+                #update status for second algorithm
+
+                status_2 = MLAlgorithmStatus(status = "ab_testing",
+                created_by=instance.created_by,
+                parent_mlalgorithm=instance.parent_algorithm_2,
+                active=True)
+                status_2.save()
+                deactivate_other_statuses(status_2)
+        
+        except Exception as e:
+            raise APIException(str(e))
+
+class StopABTestView(views.APIView):
+    def post(self, request, ab_test_id, format=None):
+        try:
+            ab_test = ABTest.objects.get(pk=ab_test_id)
+
+            if ab_test.ended_at is not None:
+                return Response({"message": "AB Test already finished."})
+            
+            date_now = datetime.datetime.now()
+            #alg_1 accuracy
+            all_response_1 = MLRequest.objects.filter(
+                parent_algorithm=ab_test.parent_algorithm_1,
+                created_at__gt = ab_test.created_at,
+                created_at__lt = date_now
+            ).count()
+            correct_responses_1 = MLRequest.objects.filter(
+                parent_algorithm=ab_test.parent_algorithm_1,
+                created_at__gt = ab_test.created_at,
+                created_at__lt = date_now,
+                response=F('feedback')
+            ).count()
+            accuracy_1 = correct_responses_1 / float(all_response_1)
+            print(all_response_1, correct_responses_1, accuracy_1)
+
+            #alg_2 accuracy
+            all_response_2 = MLRequest.objects.filter(
+                parent_algorithm=ab_test.parent_algorithm_2,
+                created_at__gt = ab_test.created_at,
+                created_at__lt = date_now
+            ).count()
+            correct_responses_2 = MLRequest.objects.filter(
+                parent_algorithm=ab_test.parent_algorithm_2,
+                created_at__gt = ab_test.created_at,
+                created_at__lt = date_now,
+                response=F('feedback')
+            ).count()
+            accuracy_2 = correct_responses_2 / float(all_response_2)
+            print(all_response_2, correct_responses_2, accuracy_2)
+
+            #select algorithm with higher accuracy
+            alg_id_1, alg_id_2 = ab_test.parent_algorithm_1, ab_test.parent_algorithm_2
+
+            if accuracy_1 < accuracy_2:
+                alg_id_1, alg_id_2 = alg_id_2, alg_id_1
+            
+            status_1 = MLAlgorithmStatus(
+                status = "production",
+                created_by=ab_test.created_by,
+                parent_mlalgorithm=alg_id_1,
+                active=True)
+            
+            status_1.save()
+            deactivate_other_statuses(status_1)
+            #update status for second algorithm
+            status_2 = MLAlgorithmStatus(
+                status="testing",
+                created_by=ab_test.created_by,
+                parent_mlalgorithm = alg_id_2,
+                active=True)
+            status_2.save()
+            deactivate_other_statuses(status_2)
+
+            summary = "Algorithm_1 accuracy : {}, Algorithm_2 accuracy: {}".format(accuracy_1, accuracy_2)
+            ab_test.ended_at = date_now
+            ab_test.summary = summary
+            ab_test.save()
+        
+        except Exception as e:
+            return Response({"status" : "Error", "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response({"message" : "AB Test finished.", "summary" : summary})
