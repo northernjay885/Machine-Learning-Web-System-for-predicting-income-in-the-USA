@@ -2,7 +2,7 @@
 
 Build a machine learning web system for predicting income in the USA. 
 
-The machine learning models are trained by [Adult income dataset] (https://archive.ics.uci.edu/ml/datasets/Adult). 
+The machine learning models are trained by [Adult income dataset](https://archive.ics.uci.edu/ml/datasets/Adult). 
 
 And the prediction can be pulled from the web service using REST API.
 
