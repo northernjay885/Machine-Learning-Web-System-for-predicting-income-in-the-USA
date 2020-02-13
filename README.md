@@ -59,8 +59,3 @@ docker-composed up
 * [Django](https://www.djangoproject.com/) - The web framework used
 * [Django-restframework](https://www.django-rest-framework.org/) - RESTful API
 
-## Acknowledgments
-
-* Hat tip to anyone whose code was used
-* Inspiration
-* etc
